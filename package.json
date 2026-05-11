@@ -1,0 +1,35 @@
+{
+  "name": "paper-search-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for paper search, recursive references, and PDF text extraction.",
+  "type": "module",
+  "private": false,
+  "license": "MIT",
+  "files": [
+    "src",
+    "scripts",
+    "README.md",
+    "README.zh-CN.md",
+    "prompt.md",
+    "LICENSE",
+    ".env.example",
+    "Dockerfile"
+  ],
+  "bin": {
+    "paper-search-mcp": "./src/server.js"
+  },
+  "scripts": {
+    "start": "node ./src/server.js",
+    "smoke": "node ./scripts/smoke-test.js",
+    "configure": "node ./scripts/configure.mjs",
+    "verify:tools": "node ./scripts/list-tools.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.13.0",
+    "pdf-parse": "^1.1.1",
+    "zod": "^3.24.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+.npm-cache/
+.cache/
+.playwright-mcp/
+papers/
+*.tgz
+.env
+tmp-*/
