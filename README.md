@@ -2,7 +2,7 @@
 
 [中文文档](./README.zh-CN.md)
 
-I built `paper-search-mcp` to give MCP clients a practical paper-search workflow: search paper metadata, expand reference chains, download authenticated PDFs when cookies are available, and extract readable text from PDFs.
+The aim of `paper-search-mcp` is to give MCP clients a practical paper-search workflow: search paper metadata, expand reference chains, download authenticated PDFs when cookies are available, and extract readable text from PDFs.
 
 The default workflow is API first. Semantic Scholar, OpenAlex, Crossref, and IEEE Xplore API provide the structured metadata path. Browser workflows are kept separate through Playwright MCP, mainly for login-gated pages, manual Google Scholar checks, and authenticated PDF downloads.
 
