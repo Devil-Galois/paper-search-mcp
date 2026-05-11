@@ -22,6 +22,7 @@
 - Node.js 18 或更高版本。
 - npm。
 - 能访问论文元数据 API 的网络环境。
+- 推荐：使用 cc-switch 作为 MCP 配置源。
 - 可选：Semantic Scholar API key，用于提高限流额度。
 - 可选：IEEE Xplore API key，用于 IEEE 元数据检索。
 - 可选：Playwright MCP，用于浏览器登录和 cookie 提取。
@@ -47,44 +48,62 @@ PAPER_SEARCH_CACHE_DIR=/path/to/cache
 
 ## 配置 MCP 客户端
 
-配置脚本可以为 Claude Code 和 Codex 写入 MCP server 条目。
+我推荐优先通过 cc-switch 管理这个 MCP。cc-switch 应该作为唯一配置源，再同步到 Claude Code 或 Codex。直接写入各客户端配置文件只作为不使用 cc-switch 时的备用方案。
 
-先预览将写入的内容：
+### 推荐：cc-switch
 
-```bash
-npm run configure -- --dry-run
-```
-
-同时配置 Claude Code 和 Codex：
+预览 cc-switch 优先的配置计划：
 
 ```bash
-npm run configure -- --apps claude,codex
+npm run configure
 ```
 
-只配置 Claude Code：
+或显式运行：
 
 ```bash
-npm run configure -- --apps claude
+npm run configure:cc-switch
 ```
 
-配置 Playwright MCP，并使用独立 Chrome profile：
+输出内容会包含 `paper-search-mcp` 和可选 `playwright` 的 server 定义。在 cc-switch 中添加或更新这些条目，开启需要的客户端同步，再让 cc-switch 写入对应客户端配置。
+
+使用专用 Chrome profile：
 
 ```bash
-npm run configure -- --apps claude,codex --chrome-profile /path/to/chrome-profile-copy
+npm run configure -- --chrome-profile /path/to/chrome-profile-copy
 ```
 
-脚本写入位置：
+### 备用：直接写客户端配置
+
+只有在不使用 cc-switch，或明确要手工维护各客户端配置时，才使用 direct 模式。
+
+预览 direct 模式将写入的内容：
+
+```bash
+npm run configure:direct -- --dry-run
+```
+
+直接写入 Claude Code 和 Codex：
+
+```bash
+npm run configure:direct -- --apps claude,codex
+```
+
+只直接写入 Claude Code：
+
+```bash
+npm run configure:direct -- --apps claude
+```
+
+direct 模式写入位置：
 
 - Claude Code：`$HOME/.claude.json`
 - Codex：`$HOME/.codex/config.toml`
 
-如果想先安全测试，不碰真实配置：
+如果想先安全测试 direct 模式，不碰真实配置：
 
 ```bash
-npm run configure -- --home ./tmp-home --apps claude,codex --chrome-profile ./tmp-home/chrome-profile
+npm run configure:direct -- --home ./tmp-home --apps claude,codex --chrome-profile ./tmp-home/chrome-profile
 ```
-
-如果你把 cc-switch 当作 MCP 配置源，需要在 cc-switch 中添加相同的 MCP 命令和参数，再让 cc-switch 同步到 Claude Code 和 Codex。
 
 ## 手动 MCP 条目
 
@@ -197,6 +216,7 @@ node ./scripts/call-expand.js 10.1109/ISSCC42615.2023.10067573
 - `.cache/`
 - `.npm-cache/`
 - `.playwright-mcp/`
+- `browser-profiles/`
 - 复制出来的浏览器 profile
 - 下载的 PDF
 - API keys

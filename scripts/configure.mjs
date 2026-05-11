@@ -8,6 +8,7 @@ const args = parseArgs(process.argv.slice(2));
 const homeDir = path.resolve(args.home || process.env.HOME || process.env.USERPROFILE || ".");
 const cacheDir = path.resolve(args.cacheDir || path.join(homeDir, ".paper-search-mcp", "cache"));
 const apps = new Set((args.apps || "claude,codex").split(",").map((item) => item.trim()).filter(Boolean));
+const manager = args.manager || "cc-switch";
 const dryRun = Boolean(args.dryRun);
 const withPlaywright = args.withPlaywright !== "false";
 const chromeProfile = args.chromeProfile ? path.resolve(args.chromeProfile) : undefined;
@@ -35,6 +36,7 @@ const playwrightServer = {
 const plan = {
   homeDir,
   projectDir,
+  manager,
   dryRun,
   apps: [...apps],
   servers: {
@@ -43,9 +45,15 @@ const plan = {
   }
 };
 
-if (apps.has("claude")) await configureClaude(plan);
-if (apps.has("codex")) await configureCodex(plan);
-console.log(JSON.stringify({ ok: true, ...plan }, null, 2));
+if (manager === "direct") {
+  if (apps.has("claude")) await configureClaude(plan);
+  if (apps.has("codex")) await configureCodex(plan);
+  console.log(JSON.stringify({ ok: true, ...plan, nextSteps: directNextSteps(plan) }, null, 2));
+} else if (manager === "cc-switch") {
+  console.log(JSON.stringify({ ok: true, ...plan, ccSwitch: ccSwitchPlan(plan), nextSteps: ccSwitchNextSteps(plan) }, null, 2));
+} else {
+  throw new Error("Unsupported manager. Use --manager cc-switch or --manager direct.");
+}
 
 async function configureClaude({ homeDir, servers, dryRun }) {
   const claudePath = path.join(homeDir, ".claude.json");
@@ -86,6 +94,43 @@ function renderCodexMcp(servers) {
     lines.push("");
   }
   return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function renderClaudeMcp(servers) {
+  return {
+    mcpServers: servers
+  };
+}
+
+function ccSwitchPlan({ apps, servers }) {
+  return {
+    preferred: true,
+    reason: "Use cc-switch as the single MCP source of truth, then sync to selected clients.",
+    apps,
+    servers,
+    claudeSnippet: renderClaudeMcp(servers),
+    codexSnippet: renderCodexMcp(servers)
+  };
+}
+
+function ccSwitchNextSteps({ apps }) {
+  return [
+    "Open cc-switch.",
+    "Open the MCP panel.",
+    "Add or update the paper-search-mcp server using the server definition printed in ccSwitch.servers.",
+    "Add or update the playwright server when browser login or authenticated PDF download is needed.",
+    `Enable sync for: ${apps.join(", ")}.`,
+    "Apply or sync from cc-switch, then restart the affected client if that client requires it.",
+    "Use --manager direct only when cc-switch is not part of your setup or you intentionally want per-client config files."
+  ];
+}
+
+function directNextSteps({ apps }) {
+  return [
+    `Direct config mode wrote or previewed entries for: ${apps.join(", ")}.`,
+    "Use this mode only when cc-switch is not the source of truth.",
+    "If you later adopt cc-switch, import the current client config into cc-switch and manage MCP servers there."
+  ];
 }
 
 function stripManagedMcp(text) {

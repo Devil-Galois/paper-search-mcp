@@ -22,6 +22,8 @@
     "start": "node ./src/server.js",
     "smoke": "node ./scripts/smoke-test.js",
     "configure": "node ./scripts/configure.mjs",
+    "configure:cc-switch": "node ./scripts/configure.mjs --manager cc-switch",
+    "configure:direct": "node ./scripts/configure.mjs --manager direct",
     "verify:tools": "node ./scripts/list-tools.js"
   },
   "dependencies": {

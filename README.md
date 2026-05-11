@@ -22,6 +22,7 @@ The default workflow is API first. Semantic Scholar, OpenAlex, Crossref, and IEE
 - Node.js 18 or newer.
 - npm.
 - Network access to metadata APIs.
+- Recommended: cc-switch as the MCP configuration source of truth.
 - Optional: Semantic Scholar API key for higher rate limits.
 - Optional: IEEE Xplore API key for IEEE metadata search.
 - Optional: Playwright MCP for browser-assisted login and cookie extraction.
@@ -47,44 +48,62 @@ PAPER_SEARCH_CACHE_DIR=/path/to/cache
 
 ## Configure MCP Clients
 
-The configure script can write MCP server entries for Claude Code and Codex.
+I recommend managing this MCP through cc-switch first. cc-switch should be the single source of truth, and Claude Code or Codex should receive MCP entries through cc-switch sync. Direct per-client config is a fallback for setups that do not use cc-switch.
 
-Preview the generated config:
+### Recommended: cc-switch
 
-```bash
-npm run configure -- --dry-run
-```
-
-Configure both Claude Code and Codex:
+Preview the cc-switch-first configuration plan:
 
 ```bash
-npm run configure -- --apps claude,codex
+npm run configure
 ```
 
-Configure only Claude Code:
+or explicitly:
 
 ```bash
-npm run configure -- --apps claude
+npm run configure:cc-switch
 ```
 
-Configure with Playwright MCP and a dedicated Chrome profile:
+The output contains the `paper-search-mcp` and optional `playwright` server definitions. Add or update those entries in cc-switch, enable sync for the clients you use, then let cc-switch write the client-specific config.
+
+With a dedicated Chrome profile:
 
 ```bash
-npm run configure -- --apps claude,codex --chrome-profile /path/to/chrome-profile-copy
+npm run configure -- --chrome-profile /path/to/chrome-profile-copy
 ```
 
-The script writes:
+### Fallback: direct client config
+
+Use direct mode only when cc-switch is not part of your setup, or when you intentionally want to manage client config files by hand.
+
+Preview direct writes:
+
+```bash
+npm run configure:direct -- --dry-run
+```
+
+Write both Claude Code and Codex entries directly:
+
+```bash
+npm run configure:direct -- --apps claude,codex
+```
+
+Write only Claude Code directly:
+
+```bash
+npm run configure:direct -- --apps claude
+```
+
+Direct mode writes:
 
 - Claude Code: `$HOME/.claude.json`
 - Codex: `$HOME/.codex/config.toml`
 
-To test safely without touching your real config:
+To test direct mode safely without touching your real config:
 
 ```bash
-npm run configure -- --home ./tmp-home --apps claude,codex --chrome-profile ./tmp-home/chrome-profile
+npm run configure:direct -- --home ./tmp-home --apps claude,codex --chrome-profile ./tmp-home/chrome-profile
 ```
-
-If you use cc-switch as the source of truth, add the same MCP command and arguments in cc-switch, then let cc-switch sync the config to Claude Code and Codex.
 
 ## Manual MCP Entries
 
@@ -197,6 +216,7 @@ Do not commit:
 - `.cache/`
 - `.npm-cache/`
 - `.playwright-mcp/`
+- `browser-profiles/`
 - copied browser profiles
 - downloaded PDFs
 - API keys

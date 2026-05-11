@@ -2,6 +2,7 @@ node_modules/
 .npm-cache/
 .cache/
 .playwright-mcp/
+browser-profiles/
 papers/
 *.tgz
 .env
