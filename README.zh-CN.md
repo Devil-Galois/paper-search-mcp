@@ -2,7 +2,7 @@
 
 [English README](./README.md)
 
-我做 `paper-search-mcp` 的目标很直接：给 MCP 客户端提供一套可落地的论文检索流程，包括论文元数据检索、参考文献递归展开、带 cookie 的认证 PDF 下载，以及 PDF 文本解析。
+`paper-search-mcp` 的目标很直接：给 MCP 客户端提供一套可落地的论文检索流程，包括论文元数据检索、参考文献递归展开、带 cookie 的认证 PDF 下载，以及 PDF 文本解析。
 
 默认流程是 API 优先。Semantic Scholar、OpenAlex、Crossref 和 IEEE Xplore API 负责结构化元数据；浏览器流程交给 Playwright MCP，主要用于需要登录的页面、Google Scholar 少量人工核对，以及认证 PDF 下载。
 
