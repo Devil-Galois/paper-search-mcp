@@ -207,35 +207,3 @@ npm run verify:tools
 npm run smoke -- "high-speed SAR ADC"
 node ./scripts/call-expand.js 10.1109/ISSCC42615.2023.10067573
 ```
-
-## Privacy
-
-Do not commit:
-
-- `.env`
-- `.cache/`
-- `.npm-cache/`
-- `.playwright-mcp/`
-- `browser-profiles/`
-- copied browser profiles
-- downloaded PDFs
-- API keys
-- local Claude Code, Codex, or cc-switch config files
-
-Before publishing, scan for local paths and secrets:
-
-```bash
-rg -n "sk-[A-Za-z0-9]|api[_-]?key|token|password|secret" . \
-  --glob '!node_modules/**' --glob '!.cache/**' --glob '!.npm-cache/**' --glob '!.playwright-mcp/**'
-```
-
-## Release
-
-```bash
-git init
-git add .
-git commit -m "Initial release"
-git branch -M main
-git remote add origin https://github.com/Devil-Galois/paper-search-mcp.git
-git push -u origin main
-```
