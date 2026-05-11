@@ -207,5 +207,3 @@ npm run verify:tools
 npm run smoke -- "high-speed SAR ADC"
 node ./scripts/call-expand.js 10.1109/ISSCC42615.2023.10067573
 ```
-git push -u origin main
-```
