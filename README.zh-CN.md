@@ -72,6 +72,14 @@ npm run configure:cc-switch
 npm run configure -- --chrome-profile /path/to/chrome-profile-copy
 ```
 
+检查输出计划无误后，可以自动写入或更新 `cc-switch.db` 中的两个 MCP 条目：
+
+```bash
+npm run configure -- --apply-cc-switch --chrome-profile /path/to/chrome-profile-copy
+```
+
+脚本会先备份数据库，备份路径形如 `$HOME/.cc-switch/cc-switch.db.<timestamp>.bak`。如果数据库不在 `$HOME/.cc-switch/` 下，可使用 `--cc-switch-db /path/to/cc-switch.db` 指定。
+
 ### 备用：直接写客户端配置
 
 只有在不使用 cc-switch，或明确要手工维护各客户端配置时，才使用 direct 模式。

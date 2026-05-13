@@ -72,6 +72,14 @@ With a dedicated Chrome profile:
 npm run configure -- --chrome-profile /path/to/chrome-profile-copy
 ```
 
+After reviewing the printed plan, you can write or update both MCP entries in `cc-switch.db` automatically:
+
+```bash
+npm run configure -- --apply-cc-switch --chrome-profile /path/to/chrome-profile-copy
+```
+
+The script backs up the database first as `$HOME/.cc-switch/cc-switch.db.<timestamp>.bak`. Use `--cc-switch-db /path/to/cc-switch.db` when the database is not under `$HOME/.cc-switch/`.
+
 ### Fallback: direct client config
 
 Use direct mode only when cc-switch is not part of your setup, or when you intentionally want to manage client config files by hand.

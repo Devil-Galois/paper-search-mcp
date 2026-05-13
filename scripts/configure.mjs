@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,8 +11,11 @@ const cacheDir = path.resolve(args.cacheDir || path.join(homeDir, ".paper-search
 const apps = new Set((args.apps || "claude,codex").split(",").map((item) => item.trim()).filter(Boolean));
 const manager = args.manager || "cc-switch";
 const dryRun = Boolean(args.dryRun);
+const applyCcSwitch = Boolean(args.applyCcSwitch);
 const withPlaywright = args.withPlaywright !== "false";
 const chromeProfile = args.chromeProfile ? path.resolve(args.chromeProfile) : undefined;
+const ccSwitchDb = path.resolve(args.ccSwitchDb || path.join(homeDir, ".cc-switch", "cc-switch.db"));
+const sqliteCommand = args.sqlite || "sqlite3";
 
 const paperServer = {
   type: "stdio",
@@ -38,7 +42,9 @@ const plan = {
   projectDir,
   manager,
   dryRun,
+  applyCcSwitch,
   apps: [...apps],
+  ccSwitchDb,
   servers: {
     "paper-search-mcp": paperServer,
     ...(withPlaywright ? { playwright: playwrightServer } : {})
@@ -50,9 +56,55 @@ if (manager === "direct") {
   if (apps.has("codex")) await configureCodex(plan);
   console.log(JSON.stringify({ ok: true, ...plan, nextSteps: directNextSteps(plan) }, null, 2));
 } else if (manager === "cc-switch") {
-  console.log(JSON.stringify({ ok: true, ...plan, ccSwitch: ccSwitchPlan(plan), nextSteps: ccSwitchNextSteps(plan) }, null, 2));
+  let ccSwitchWrite = undefined;
+  if (applyCcSwitch) {
+    ccSwitchWrite = await configureCcSwitch(plan);
+  }
+  console.log(JSON.stringify({ ok: true, ...plan, ccSwitchWrite, ccSwitch: ccSwitchPlan(plan), nextSteps: ccSwitchNextSteps(plan) }, null, 2));
 } else {
   throw new Error("Unsupported manager. Use --manager cc-switch or --manager direct.");
+}
+
+async function configureCcSwitch({ apps, servers, ccSwitchDb, dryRun }) {
+  const rows = Object.entries(servers).map(([name, server]) => ({
+    id: name,
+    name,
+    server_config: JSON.stringify(server),
+    description: descriptionForServer(name),
+    tags: JSON.stringify(["research", "mcp"]),
+    enabled_claude: apps.includes("claude") ? 1 : 0,
+    enabled_codex: apps.includes("codex") ? 1 : 0,
+    enabled_gemini: apps.includes("gemini") ? 1 : 0,
+    enabled_opencode: apps.includes("opencode") ? 1 : 0,
+    enabled_hermes: apps.includes("hermes") ? 1 : 0
+  }));
+  const sql = renderCcSwitchUpsertSql(rows);
+
+  if (dryRun) {
+    return {
+      dryRun: true,
+      db: ccSwitchDb,
+      servers: rows.map(({ id, name, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes }) => ({
+        id,
+        name,
+        enabled_claude,
+        enabled_codex,
+        enabled_gemini,
+        enabled_opencode,
+        enabled_hermes
+      }))
+    };
+  }
+
+  const backupPath = `${ccSwitchDb}.${timestamp()}.bak`;
+  await copyFile(ccSwitchDb, backupPath);
+  await runSqlite(sqliteCommand, ccSwitchDb, sql);
+  return {
+    dryRun: false,
+    db: ccSwitchDb,
+    backupPath,
+    servers: rows.map(({ id, name }) => ({ id, name }))
+  };
 }
 
 async function configureClaude({ homeDir, servers, dryRun }) {
@@ -115,10 +167,8 @@ function ccSwitchPlan({ apps, servers }) {
 
 function ccSwitchNextSteps({ apps }) {
   return [
-    "Open cc-switch.",
-    "Open the MCP panel.",
-    "Add or update the paper-search-mcp server using the server definition printed in ccSwitch.servers.",
-    "Add or update the playwright server when browser login or authenticated PDF download is needed.",
+    "Default mode prints a cc-switch plan without writing cc-switch.db.",
+    "To write cc-switch.db automatically, rerun with --apply-cc-switch after reviewing the printed servers.",
     `Enable sync for: ${apps.join(", ")}.`,
     "Apply or sync from cc-switch, then restart the affected client if that client requires it.",
     "Use --manager direct only when cc-switch is not part of your setup or you intentionally want per-client config files."
@@ -195,4 +245,57 @@ function camelCase(value) {
 
 function tomlString(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function descriptionForServer(name) {
+  if (name === "paper-search-mcp") return "Paper search, reference expansion, PDF download, and PDF text extraction MCP server.";
+  if (name === "playwright") return "Browser automation companion MCP for login-gated pages and authenticated PDF cookie extraction.";
+  return "";
+}
+
+function renderCcSwitchUpsertSql(rows) {
+  const statements = rows.map((row) => `
+INSERT INTO mcp_servers (
+  id, name, server_config, description, homepage, docs, tags,
+  enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes
+) VALUES (
+  ${sqlString(row.id)}, ${sqlString(row.name)}, ${sqlString(row.server_config)}, ${sqlString(row.description)},
+  NULL, NULL, ${sqlString(row.tags)},
+  ${row.enabled_claude}, ${row.enabled_codex}, ${row.enabled_gemini}, ${row.enabled_opencode}, ${row.enabled_hermes}
+)
+ON CONFLICT(id) DO UPDATE SET
+  name = excluded.name,
+  server_config = excluded.server_config,
+  description = excluded.description,
+  tags = excluded.tags,
+  enabled_claude = excluded.enabled_claude,
+  enabled_codex = excluded.enabled_codex,
+  enabled_gemini = excluded.enabled_gemini,
+  enabled_opencode = excluded.enabled_opencode,
+  enabled_hermes = excluded.enabled_hermes;`);
+  return `BEGIN;\n${statements.join("\n")}\nCOMMIT;\n`;
+}
+
+function sqlString(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function runSqlite(command, dbPath, sql) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, [dbPath], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve({ stdout, stderr });
+      else reject(new Error(`sqlite3 exited with ${code}: ${stderr || stdout}`));
+    });
+    child.stdin.end(sql);
+  });
+}
+
+function timestamp() {
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
 }

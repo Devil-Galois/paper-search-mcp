@@ -13,5 +13,27 @@ const transport = new StdioClientTransport({
 const client = new Client({ name: "paper-search-smoke-client", version: "0.1.0" });
 await client.connect(transport);
 const tools = await client.listTools();
-console.log(JSON.stringify(tools, null, 2));
+
+const requiredTools = [
+  "search_papers",
+  "get_paper",
+  "expand_references",
+  "build_literature_map",
+  "download_pdf",
+  "read_pdf"
+];
+const toolNames = new Set((tools.tools || []).map((tool) => tool.name));
+const missingTools = requiredTools.filter((name) => !toolNames.has(name));
+
+console.log(JSON.stringify({
+  ok: missingTools.length === 0,
+  requiredTools,
+  exposedTools: [...toolNames].sort(),
+  missingTools
+}, null, 2));
+
 await client.close();
+
+if (missingTools.length) {
+  process.exitCode = 1;
+}

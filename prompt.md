@@ -24,8 +24,10 @@ https://github.com/Devil-Galois/paper-search-mcp.git
    - read_pdf
 5. 先运行 cc-switch 优先的配置预览：
    npm run configure -- --chrome-profile ./browser-profiles/paper-search
-6. 展示输出中的 ccSwitch.servers，并说明需要在 cc-switch 中添加哪些 MCP server 条目。
-7. 如果本机已安装并使用 cc-switch，请通过 cc-switch 添加或更新 paper-search-mcp 和 playwright，再从 cc-switch 同步到 Claude Code/Codex。
+6. 展示输出中的 ccSwitch.servers，确认会添加或更新 paper-search-mcp 和 playwright 两个 MCP server 条目。
+7. 如果本机已安装并使用 cc-switch，在确认计划无误后运行：
+   npm run configure -- --apply-cc-switch --chrome-profile ./browser-profiles/paper-search
+   该命令会先备份 cc-switch.db，再写入或更新 paper-search-mcp 和 playwright。之后从 cc-switch 同步到 Claude Code/Codex。
 8. 如果必须使用 direct 模式，先备份真实配置，再运行：
    npm run configure:direct -- --apps claude,codex --chrome-profile ./browser-profiles/paper-search
    direct 模式只能作为没有 cc-switch 或用户明确要求时的备用方案。
