@@ -3,7 +3,7 @@
 把下面这段提示词复制给 Codex 或 Claude Code，它会从 GitHub 拉取项目并配置到本地。
 
 ```text
-请从 GitHub 安装并配置 paper-search-mcp：
+请从 GitHub 安装并配置 paper-search-mcp 与 playwright mcp (https://github.com/microsoft/playwright.git)：
 
 仓库地址：
 https://github.com/Devil-Galois/paper-search-mcp.git
