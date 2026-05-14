@@ -78,11 +78,35 @@ After reviewing the printed plan, you can write or update both MCP entries in `c
 npm run configure -- --apply-cc-switch --chrome-profile /path/to/chrome-profile-copy
 ```
 
-The script backs up the database first as `$HOME/.cc-switch/cc-switch.db.<timestamp>.bak`. Use `--cc-switch-db /path/to/cc-switch.db` when the database is not under `$HOME/.cc-switch/`.
+This updates the cc-switch source of truth only. It does not directly write Claude Code or Codex config files. The script backs up the database first as `$HOME/.cc-switch/cc-switch.db.<timestamp>.bak`. Use `--cc-switch-db /path/to/cc-switch.db` when the database is not under `$HOME/.cc-switch/`.
+
+If your cc-switch build exposes a CLI sync command, pass it explicitly:
+
+```bash
+npm run configure -- --apply-cc-switch --cc-switch-sync-command "cc-switch sync" --chrome-profile /path/to/chrome-profile-copy
+```
+
+If there is no CLI sync command, open cc-switch and apply or sync the MCP entries to Claude Code and Codex from the GUI.
+
+Verify the three configuration layers:
+
+```bash
+npm run verify:config
+```
+
+The verification distinguishes:
+
+- cc-switch DB contains `paper-search-mcp` and `playwright`, with `enabled_claude` / `enabled_codex` set.
+- Claude Code `$HOME/.claude.json` contains the synced MCP entries.
+- Codex `$HOME/.codex/config.toml` contains the synced MCP entries.
+
+After sync, restart Claude Code / Codex or open a new session. Existing sessions may not hot-load MCP changes.
 
 ### Fallback: direct client config
 
 Use direct mode only when cc-switch is not part of your setup, or when you intentionally want to manage client config files by hand.
+
+Direct mode writes Claude Code / Codex config files directly and can diverge from cc-switch. Do not use it as the default repair path for cc-switch sync issues unless the user explicitly accepts that split.
 
 Preview direct writes:
 
@@ -142,6 +166,18 @@ Playwright MCP companion:
 ```
 
 Do not point Playwright at your daily default Chrome profile. Use a copied or dedicated profile so Chrome session locks and profile conflicts do not break browser automation.
+
+Playwright is only a companion for small page checks, login pages, and authenticated PDF cookie extraction. If IEEE returns `418`, a CAPTCHA appears, an institutional login is required, or a paywall blocks access, stop and finish the step manually in the browser. This project does not automate bypasses.
+
+## End-to-End Check
+
+Run a compact check that avoids dumping large raw tool outputs:
+
+```bash
+npm run e2e:check -- "high-speed SAR ADC calibration ISSCC JSSC"
+```
+
+The script reports result count, selected paper metadata, reference node/edge counts, source errors, and whether a Playwright page check was attempted. Playwright page checks remain manual or MCP-client driven because login and publisher pages are session-specific.
 
 ## Tools
 

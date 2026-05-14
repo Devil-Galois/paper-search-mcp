@@ -24,7 +24,9 @@
     "configure": "node ./scripts/configure.mjs",
     "configure:cc-switch": "node ./scripts/configure.mjs --manager cc-switch",
     "configure:direct": "node ./scripts/configure.mjs --manager direct",
-    "verify:tools": "node ./scripts/list-tools.js"
+    "verify:tools": "node ./scripts/list-tools.js",
+    "verify:config": "node ./scripts/configure.mjs --verify-sync",
+    "e2e:check": "node ./scripts/e2e-check.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.13.0",

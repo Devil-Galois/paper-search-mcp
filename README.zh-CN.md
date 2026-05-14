@@ -78,11 +78,35 @@ npm run configure -- --chrome-profile /path/to/chrome-profile-copy
 npm run configure -- --apply-cc-switch --chrome-profile /path/to/chrome-profile-copy
 ```
 
-脚本会先备份数据库，备份路径形如 `$HOME/.cc-switch/cc-switch.db.<timestamp>.bak`。如果数据库不在 `$HOME/.cc-switch/` 下，可使用 `--cc-switch-db /path/to/cc-switch.db` 指定。
+这个命令只更新 cc-switch 这个配置源，不会直接写 Claude Code 或 Codex 的配置文件。脚本会先备份数据库，备份路径形如 `$HOME/.cc-switch/cc-switch.db.<timestamp>.bak`。如果数据库不在 `$HOME/.cc-switch/` 下，可使用 `--cc-switch-db /path/to/cc-switch.db` 指定。
+
+如果你的 cc-switch 版本提供命令行同步接口，可以显式传入：
+
+```bash
+npm run configure -- --apply-cc-switch --cc-switch-sync-command "cc-switch sync" --chrome-profile /path/to/chrome-profile-copy
+```
+
+如果没有命令行同步接口，请打开 cc-switch GUI，把 MCP 条目应用或同步到 Claude Code 和 Codex。
+
+检查三层配置状态：
+
+```bash
+npm run verify:config
+```
+
+这个检查会区分：
+
+- cc-switch DB 中是否有 `paper-search-mcp` 和 `playwright`，以及 `enabled_claude` / `enabled_codex` 是否开启。
+- Claude Code 的 `$HOME/.claude.json` 是否已经同步对应 MCP 条目。
+- Codex 的 `$HOME/.codex/config.toml` 是否已经同步对应 MCP 条目。
+
+同步后建议重启 Claude Code / Codex，或重新打开会话。已有会话不一定会热加载 MCP 改动。
 
 ### 备用：直接写客户端配置
 
 只有在不使用 cc-switch，或明确要手工维护各客户端配置时，才使用 direct 模式。
+
+direct 模式会直接写 Claude Code / Codex 配置文件，可能和 cc-switch 配置源分叉。不要把 direct 当作 cc-switch 同步失败后的默认补救，除非用户明确接受这种分叉。
 
 预览 direct 模式将写入的内容：
 
@@ -142,6 +166,18 @@ npm run configure:direct -- --home ./tmp-home --apps claude,codex --chrome-profi
 ```
 
 不要把 Playwright 指向日常默认 Chrome profile。建议使用复制出来的 profile 或专用 profile，避免 Chrome 会话锁和 profile 冲突影响浏览器自动化。
+
+Playwright 只是配套工具，用于少量页面核对、登录页和认证 PDF cookie 提取。遇到 IEEE `418`、验证码、机构登录或付费墙时必须暂停并手动在浏览器中处理，本项目不会自动绕过这些限制。
+
+## 端到端检查
+
+运行一个紧凑检查，避免输出大量原始 JSON：
+
+```bash
+npm run e2e:check -- "high-speed SAR ADC calibration ISSCC JSSC"
+```
+
+脚本会输出检索结果数量、选中论文元数据、参考文献节点/边数量、数据源错误，以及是否进行了 Playwright 页面核对。Playwright 页面核对保留为手动或 MCP 客户端驱动，因为登录和出版社页面依赖具体会话。
 
 ## 工具
 

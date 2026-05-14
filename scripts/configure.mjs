@@ -12,10 +12,12 @@ const apps = new Set((args.apps || "claude,codex").split(",").map((item) => item
 const manager = args.manager || "cc-switch";
 const dryRun = Boolean(args.dryRun);
 const applyCcSwitch = Boolean(args.applyCcSwitch);
+const verifySync = Boolean(args.verifySync);
 const withPlaywright = args.withPlaywright !== "false";
 const chromeProfile = args.chromeProfile ? path.resolve(args.chromeProfile) : undefined;
 const ccSwitchDb = path.resolve(args.ccSwitchDb || path.join(homeDir, ".cc-switch", "cc-switch.db"));
 const sqliteCommand = args.sqlite || "sqlite3";
+const ccSwitchSyncCommand = args.ccSwitchSyncCommand;
 
 const paperServer = {
   type: "stdio",
@@ -43,6 +45,7 @@ const plan = {
   manager,
   dryRun,
   applyCcSwitch,
+  verifySync,
   apps: [...apps],
   ccSwitchDb,
   servers: {
@@ -57,10 +60,15 @@ if (manager === "direct") {
   console.log(JSON.stringify({ ok: true, ...plan, nextSteps: directNextSteps(plan) }, null, 2));
 } else if (manager === "cc-switch") {
   let ccSwitchWrite = undefined;
+  let ccSwitchSync = undefined;
   if (applyCcSwitch) {
     ccSwitchWrite = await configureCcSwitch(plan);
+    if (ccSwitchSyncCommand && !dryRun) {
+      ccSwitchSync = await runShellCommand(ccSwitchSyncCommand);
+    }
   }
-  console.log(JSON.stringify({ ok: true, ...plan, ccSwitchWrite, ccSwitch: ccSwitchPlan(plan), nextSteps: ccSwitchNextSteps(plan) }, null, 2));
+  const syncStatus = (verifySync || applyCcSwitch) ? await verifyConfig(plan) : undefined;
+  console.log(JSON.stringify({ ok: true, ...plan, ccSwitchWrite, ccSwitchSync, syncStatus, ccSwitch: ccSwitchPlan(plan), nextSteps: ccSwitchNextSteps(plan) }, null, 2));
 } else {
   throw new Error("Unsupported manager. Use --manager cc-switch or --manager direct.");
 }
@@ -168,9 +176,12 @@ function ccSwitchPlan({ apps, servers }) {
 function ccSwitchNextSteps({ apps }) {
   return [
     "Default mode prints a cc-switch plan without writing cc-switch.db.",
-    "To write cc-switch.db automatically, rerun with --apply-cc-switch after reviewing the printed servers.",
-    `Enable sync for: ${apps.join(", ")}.`,
-    "Apply or sync from cc-switch, then restart the affected client if that client requires it.",
+    "After review, --apply-cc-switch writes only the cc-switch source of truth.",
+    "It does not directly write Claude Code or Codex config unless cc-switch itself syncs them.",
+    "If your cc-switch build has a CLI sync command, pass it with --cc-switch-sync-command.",
+    `Enable and sync these clients in cc-switch: ${apps.join(", ")}.`,
+    "Run npm run verify:config to distinguish source-updated from client-synced state.",
+    "Restart the affected client or open a new session after sync; existing sessions may not hot-load MCP changes.",
     "Use --manager direct only when cc-switch is not part of your setup or you intentionally want per-client config files."
   ];
 }
@@ -181,6 +192,94 @@ function directNextSteps({ apps }) {
     "Use this mode only when cc-switch is not the source of truth.",
     "If you later adopt cc-switch, import the current client config into cc-switch and manage MCP servers there."
   ];
+}
+
+async function verifyConfig({ homeDir, ccSwitchDb, apps, servers }) {
+  const serverNames = Object.keys(servers);
+  const ccSwitch = await verifyCcSwitchDb(ccSwitchDb, serverNames);
+  const claude = await verifyClaudeConfig(path.join(homeDir, ".claude.json"), serverNames);
+  const codex = await verifyCodexConfig(path.join(homeDir, ".codex", "config.toml"), serverNames);
+  const wantsClaude = apps.includes("claude");
+  const wantsCodex = apps.includes("codex");
+  const sourceReady = serverNames.every((name) => {
+    const row = ccSwitch.servers[name];
+    return row?.present && (!wantsClaude || row.enabled_claude === 1) && (!wantsCodex || row.enabled_codex === 1);
+  });
+  const claudeSynced = !wantsClaude || serverNames.every((name) => claude.servers[name]?.present);
+  const codexSynced = !wantsCodex || serverNames.every((name) => codex.servers[name]?.present);
+  const warnings = [];
+
+  if (!sourceReady) warnings.push("cc-switch DB is not ready for every requested MCP server/client.");
+  if (wantsClaude && !claudeSynced) warnings.push("Claude Code config is not synced yet.");
+  if (wantsCodex && !codexSynced) warnings.push("Codex config is not synced yet.");
+  if (sourceReady && (!claudeSynced || !codexSynced)) {
+    warnings.push("Source is updated, but target client config still needs cc-switch apply/sync and usually a client restart or new session.");
+  }
+
+  return {
+    summary: {
+      sourceReady,
+      claudeSynced,
+      codexSynced,
+      fullySynced: sourceReady && claudeSynced && codexSynced
+    },
+    ccSwitch,
+    clients: {
+      claude,
+      codex
+    },
+    warnings
+  };
+}
+
+async function verifyCcSwitchDb(dbPath, serverNames) {
+  const servers = Object.fromEntries(serverNames.map((name) => [name, { present: false }]));
+  try {
+    const quoted = serverNames.map(sqlString).join(", ");
+    const sql = `SELECT id, name, enabled_claude, enabled_codex FROM mcp_servers WHERE id IN (${quoted}) OR name IN (${quoted}) ORDER BY id;`;
+    const { stdout } = await runSqlite(sqliteCommand, dbPath, sql);
+    for (const line of stdout.trim().split(/\r?\n/).filter(Boolean)) {
+      const [id, name, enabledClaude, enabledCodex] = line.split("|");
+      const key = serverNames.includes(id) ? id : name;
+      if (!key || !servers[key]) continue;
+      servers[key] = {
+        present: true,
+        id,
+        name,
+        enabled_claude: Number(enabledClaude),
+        enabled_codex: Number(enabledCodex)
+      };
+    }
+    return { db: dbPath, ok: true, servers };
+  } catch (error) {
+    return { db: dbPath, ok: false, error: error.message, servers };
+  }
+}
+
+async function verifyClaudeConfig(configPath, serverNames) {
+  const servers = Object.fromEntries(serverNames.map((name) => [name, { present: false }]));
+  try {
+    const config = await readJsonOrDefault(configPath, {});
+    for (const name of serverNames) {
+      servers[name] = { present: Boolean(config.mcpServers?.[name]) };
+    }
+    return { path: configPath, ok: true, servers };
+  } catch (error) {
+    return { path: configPath, ok: false, error: error.message, servers };
+  }
+}
+
+async function verifyCodexConfig(configPath, serverNames) {
+  const servers = Object.fromEntries(serverNames.map((name) => [name, { present: false }]));
+  try {
+    const text = await readTextOrDefault(configPath, "");
+    for (const name of serverNames) {
+      servers[name] = { present: new RegExp(`^\\s*\\[mcp_servers\\.${escapeRegExp(name)}\\]`, "m").test(text) };
+    }
+    return { path: configPath, ok: true, servers };
+  } catch (error) {
+    return { path: configPath, ok: false, error: error.message, servers };
+  }
 }
 
 function stripManagedMcp(text) {
@@ -206,7 +305,8 @@ function stripManagedMcp(text) {
 
 async function readJsonOrDefault(file, fallback) {
   try {
-    return JSON.parse(await readFile(file, "utf8"));
+    const text = await readFile(file, "utf8");
+    return JSON.parse(text.replace(/^\uFEFF/, ""));
   } catch (error) {
     if (error.code === "ENOENT") return fallback;
     throw error;
@@ -296,6 +396,26 @@ function runSqlite(command, dbPath, sql) {
   });
 }
 
+function runShellCommand(command) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, [], { shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      const result = { command, code, stdout: stdout.trim(), stderr: stderr.trim() };
+      if (code === 0) resolve(result);
+      else reject(new Error(`cc-switch sync command failed with ${code}: ${result.stderr || result.stdout}`));
+    });
+  });
+}
+
 function timestamp() {
   return new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
