@@ -94,11 +94,28 @@ Verify the three configuration layers:
 npm run verify:config
 ```
 
+If you used the project-local paper-search Chrome profile during apply, either pass the same profile or use the dedicated script:
+
+```bash
+npm run configure -- --verify-sync --chrome-profile ./browser-profiles/paper-search
+npm run verify:config:paper-search
+```
+
+`--apply-cc-switch` records the last applied Chrome profile in `.cache/configure-state.json`, so `npm run verify:config` can reuse it when no `--chrome-profile` is supplied.
+
 The verification distinguishes:
 
 - cc-switch DB contains `paper-search-mcp` and `playwright`, with `enabled_claude` / `enabled_codex` set.
-- Claude Code `$HOME/.claude.json` contains the synced MCP entries.
-- Codex `$HOME/.codex/config.toml` contains the synced MCP entries.
+- Claude Code `$HOME/.claude.json` exists, is strict JSON, reports `validJson`, `hasBom`, `parseError`, and contains the synced MCP entries.
+- Codex `$HOME/.codex/config.toml` exists, passes the script's TOML sanity checks, and contains the synced MCP entries.
+
+Repair only obvious client config encoding issues:
+
+```bash
+npm run repair:configs
+```
+
+The repair command backs up `.claude.json` as `$HOME/.claude.json.<timestamp>.bom.bak`, removes only a leading UTF-8 BOM when present, and re-runs JSON validation. It does not change JSON semantics.
 
 After sync, restart Claude Code / Codex or open a new session. Existing sessions may not hot-load MCP changes.
 
@@ -178,6 +195,37 @@ npm run e2e:check -- "high-speed SAR ADC calibration ISSCC JSSC"
 ```
 
 The script reports result count, selected paper metadata, reference node/edge counts, source errors, and whether a Playwright page check was attempted. Playwright page checks remain manual or MCP-client driven because login and publisher pages are session-specific.
+
+## Troubleshooting
+
+### `.claude.json: expected value at line 1 column 1`
+
+Common cause: `$HOME/.claude.json` has a UTF-8 BOM or damaged JSON. Check the first bytes on Windows:
+
+```bash
+node -e "const fs=require('fs'); const b=fs.readFileSync(process.env.USERPROFILE+'/.claude.json'); console.log([...b.slice(0,3)])"
+```
+
+If the output is `[239,187,191]`, the file starts with `EF BB BF`.
+
+Fix:
+
+```bash
+npm run repair:configs
+npm run verify:config
+```
+
+The repair command backs up the file and rewrites it as UTF-8 without BOM.
+
+### `cc-switch.db` updated but Claude/Codex have no MCP
+
+Cause: `--apply-cc-switch` updated the cc-switch source of truth, but cc-switch has not synced/applied the entries to client config files yet. Open the cc-switch GUI, sync/apply to Claude Code and Codex, then restart the clients or open a new session.
+
+On some Windows installs, `C:\CC-Switch\cc-switch.exe --help` may print nothing and there may be no obvious CLI sync interface. In that case, treat the GUI as the sync/apply step and use `npm run verify:config` to confirm the derived client files changed.
+
+### `sourceReady=true` but `claudeSynced=false` or `codexSynced=false`
+
+This is not a server installation failure. It means the source is ready, while the client-derived config has not been synced or loaded. Use cc-switch sync/apply, then run `npm run verify:config` again.
 
 ## Tools
 

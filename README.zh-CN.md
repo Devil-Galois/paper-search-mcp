@@ -251,3 +251,55 @@ npm run verify:tools
 npm run smoke -- "high-speed SAR ADC"
 node ./scripts/call-expand.js 10.1109/ISSCC42615.2023.10067573
 ```
+
+## Windows / cc-switch 故障排查
+
+### verify:config 和 Chrome profile 一致性
+
+如果 `--apply-cc-switch` 时使用了专用 Chrome profile，验证时也应使用同一个 profile：
+
+```bash
+npm run configure -- --verify-sync --chrome-profile ./browser-profiles/paper-search
+npm run verify:config:paper-search
+```
+
+`--apply-cc-switch` 会把上次使用的 Chrome profile 记录到 `.cache/configure-state.json`，因此不传 `--chrome-profile` 时，`npm run verify:config` 会优先复用上次配置。
+
+`verify:config` 会区分三层状态：
+
+- cc-switch DB 中是否有 `paper-search-mcp` 和 `playwright`，以及 `enabled_claude` / `enabled_codex` 是否开启。
+- Claude Code 的 `$HOME/.claude.json` 是否存在、是否是严格 JSON、`validJson` / `hasBom` / `parseError` 状态，以及是否已经同步对应 MCP 条目。
+- Codex 的 `$HOME/.codex/config.toml` 是否存在、是否通过脚本的 TOML 基础检查，以及是否已经同步对应 MCP 条目。
+
+### `.claude.json: expected value at line 1 column 1`
+
+常见原因：`$HOME/.claude.json` 带 UTF-8 BOM，或 JSON 文件损坏。Windows 上可以检查前三个字节：
+
+```bash
+node -e "const fs=require('fs'); const b=fs.readFileSync(process.env.USERPROFILE+'/.claude.json'); console.log([...b.slice(0,3)])"
+```
+
+如果输出 `[239,187,191]`，说明文件以 `EF BB BF` 开头。
+
+修复：
+
+```bash
+npm run repair:configs
+npm run verify:config
+```
+
+修复命令会先把 `.claude.json` 备份为 `$HOME/.claude.json.<timestamp>.bom.bak`，只移除文件开头的 UTF-8 BOM，然后重新验证 JSON。它不会改变 JSON 语义内容。
+
+### `cc-switch.db` 已更新但 Claude/Codex 没有 MCP
+
+原因：`--apply-cc-switch` 只更新了 cc-switch 配置源，cc-switch 还没有把条目同步或应用到客户端配置文件。当前常见 Windows 安装中 `C:\CC-Switch\cc-switch.exe --help` 可能没有输出，也不一定有可用 CLI sync 接口。
+
+处理方式：打开 cc-switch GUI，同步或应用到 Claude Code 和 Codex，然后重启客户端或新开会话。
+
+### `sourceReady=true` 但 `claudeSynced=false` 或 `codexSynced=false`
+
+这不是 server 安装失败，而是配置源已经准备好，但客户端派生配置还没有同步或当前会话还没有加载。请通过 cc-switch 同步/应用后，再运行：
+
+```bash
+npm run verify:config
+```

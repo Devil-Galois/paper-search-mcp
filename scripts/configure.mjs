@@ -13,8 +13,13 @@ const manager = args.manager || "cc-switch";
 const dryRun = Boolean(args.dryRun);
 const applyCcSwitch = Boolean(args.applyCcSwitch);
 const verifySync = Boolean(args.verifySync);
+const repairClientConfigs = Boolean(args.repairClientConfigs || args.fixJsonBom);
 const withPlaywright = args.withPlaywright !== "false";
-const chromeProfile = args.chromeProfile ? path.resolve(args.chromeProfile) : undefined;
+const configureStatePath = path.join(projectDir, ".cache", "configure-state.json");
+const previousState = await readJsonLenientOrDefault(configureStatePath, {});
+const chromeProfile = args.chromeProfile
+  ? path.resolve(args.chromeProfile)
+  : previousState.chromeProfile;
 const ccSwitchDb = path.resolve(args.ccSwitchDb || path.join(homeDir, ".cc-switch", "cc-switch.db"));
 const sqliteCommand = args.sqlite || "sqlite3";
 const ccSwitchSyncCommand = args.ccSwitchSyncCommand;
@@ -46,8 +51,11 @@ const plan = {
   dryRun,
   applyCcSwitch,
   verifySync,
+  repairClientConfigs,
   apps: [...apps],
   ccSwitchDb,
+  chromeProfile,
+  configureStatePath,
   servers: {
     "paper-search-mcp": paperServer,
     ...(withPlaywright ? { playwright: playwrightServer } : {})
@@ -59,16 +67,23 @@ if (manager === "direct") {
   if (apps.has("codex")) await configureCodex(plan);
   console.log(JSON.stringify({ ok: true, ...plan, nextSteps: directNextSteps(plan) }, null, 2));
 } else if (manager === "cc-switch") {
+  let repair = undefined;
+  if (repairClientConfigs) {
+    repair = await repairClientConfigFiles(plan);
+  }
   let ccSwitchWrite = undefined;
   let ccSwitchSync = undefined;
   if (applyCcSwitch) {
     ccSwitchWrite = await configureCcSwitch(plan);
+    if (!dryRun) {
+      await writeConfigureState(plan);
+    }
     if (ccSwitchSyncCommand && !dryRun) {
       ccSwitchSync = await runShellCommand(ccSwitchSyncCommand);
     }
   }
-  const syncStatus = (verifySync || applyCcSwitch) ? await verifyConfig(plan) : undefined;
-  console.log(JSON.stringify({ ok: true, ...plan, ccSwitchWrite, ccSwitchSync, syncStatus, ccSwitch: ccSwitchPlan(plan), nextSteps: ccSwitchNextSteps(plan) }, null, 2));
+  const syncStatus = (verifySync || applyCcSwitch || repairClientConfigs) ? await verifyConfig(plan) : undefined;
+  console.log(JSON.stringify({ ok: true, ...plan, repair, ccSwitchWrite, ccSwitchSync, syncStatus, ccSwitch: ccSwitchPlan(plan), nextSteps: ccSwitchNextSteps(plan) }, null, 2));
 } else {
   throw new Error("Unsupported manager. Use --manager cc-switch or --manager direct.");
 }
@@ -113,6 +128,53 @@ async function configureCcSwitch({ apps, servers, ccSwitchDb, dryRun }) {
     backupPath,
     servers: rows.map(({ id, name }) => ({ id, name }))
   };
+}
+
+async function writeConfigureState({ configureStatePath, chromeProfile, cacheDir, apps, servers }) {
+  await mkdir(path.dirname(configureStatePath), { recursive: true });
+  await writeFile(configureStatePath, `${JSON.stringify({
+    updatedAt: new Date().toISOString(),
+    chromeProfile,
+    cacheDir,
+    apps,
+    servers: Object.keys(servers)
+  }, null, 2)}\n`, "utf8");
+}
+
+async function repairClientConfigFiles({ homeDir, dryRun }) {
+  const claudePath = path.join(homeDir, ".claude.json");
+  const claudeBefore = await inspectJsonFile(claudePath);
+  const result = {
+    claude: {
+      path: claudePath,
+      before: fileRepairSummary(claudeBefore),
+      changed: false
+    }
+  };
+
+  if (!claudeBefore.exists) {
+    result.claude.skipped = "file missing";
+    return result;
+  }
+  if (!claudeBefore.hasBom) {
+    result.claude.skipped = "no UTF-8 BOM detected";
+    return result;
+  }
+
+  const backupPath = `${claudePath}.${timestamp()}.bom.bak`;
+  result.claude.backupPath = backupPath;
+
+  if (!dryRun) {
+    await copyFile(claudePath, backupPath);
+    await writeFile(claudePath, claudeBefore.bytes.subarray(3));
+  }
+
+  const claudeAfter = dryRun
+    ? inspectJsonBytes(claudeBefore.bytes.subarray(3), claudePath)
+    : await inspectJsonFile(claudePath);
+  result.claude.after = fileRepairSummary(claudeAfter);
+  result.claude.changed = !dryRun;
+  return result;
 }
 
 async function configureClaude({ homeDir, servers, dryRun }) {
@@ -181,6 +243,7 @@ function ccSwitchNextSteps({ apps }) {
     "If your cc-switch build has a CLI sync command, pass it with --cc-switch-sync-command.",
     `Enable and sync these clients in cc-switch: ${apps.join(", ")}.`,
     "Run npm run verify:config to distinguish source-updated from client-synced state.",
+    "If .claude.json reports hasBom=true or validJson=false, run npm run repair:configs before syncing clients.",
     "Restart the affected client or open a new session after sync; existing sessions may not hot-load MCP changes.",
     "Use --manager direct only when cc-switch is not part of your setup or you intentionally want per-client config files."
   ];
@@ -210,8 +273,12 @@ async function verifyConfig({ homeDir, ccSwitchDb, apps, servers }) {
   const warnings = [];
 
   if (!sourceReady) warnings.push("cc-switch DB is not ready for every requested MCP server/client.");
-  if (wantsClaude && !claudeSynced) warnings.push("Claude Code config is not synced yet.");
-  if (wantsCodex && !codexSynced) warnings.push("Codex config is not synced yet.");
+  if (wantsClaude && claude.status === "invalid") warnings.push("Claude Code config is invalid. Repair it before relying on cc-switch GUI sync.");
+  if (wantsCodex && codex.status === "invalid") warnings.push("Codex config appears invalid. Repair it before relying on cc-switch GUI sync.");
+  if (wantsClaude && claude.status === "missing") warnings.push("Claude Code config file is missing.");
+  if (wantsCodex && codex.status === "missing") warnings.push("Codex config file is missing.");
+  if (wantsClaude && claude.status === "valid-not-synced") warnings.push("Claude Code config is valid but MCP entries are not synced yet.");
+  if (wantsCodex && codex.status === "valid-not-synced") warnings.push("Codex config is valid but MCP entries are not synced yet.");
   if (sourceReady && (!claudeSynced || !codexSynced)) {
     warnings.push("Source is updated, but target client config still needs cc-switch apply/sync and usually a client restart or new session.");
   }
@@ -258,27 +325,42 @@ async function verifyCcSwitchDb(dbPath, serverNames) {
 
 async function verifyClaudeConfig(configPath, serverNames) {
   const servers = Object.fromEntries(serverNames.map((name) => [name, { present: false }]));
-  try {
-    const config = await readJsonOrDefault(configPath, {});
-    for (const name of serverNames) {
-      servers[name] = { present: Boolean(config.mcpServers?.[name]) };
-    }
-    return { path: configPath, ok: true, servers };
-  } catch (error) {
-    return { path: configPath, ok: false, error: error.message, servers };
+  const inspection = await inspectJsonFile(configPath);
+  const base = {
+    path: configPath,
+    exists: inspection.exists,
+    validJson: inspection.validJson,
+    hasBom: inspection.hasBom,
+    firstBytes: inspection.firstBytes,
+    parseError: inspection.parseError,
+    suggestedFix: inspection.suggestedFix,
+    servers
+  };
+  if (!inspection.exists) return { ...base, ok: false, status: "missing" };
+  if (!inspection.validJson) return { ...base, ok: false, status: "invalid" };
+  for (const name of serverNames) {
+    servers[name] = { present: Boolean(inspection.value?.mcpServers?.[name]) };
   }
+  const synced = serverNames.every((name) => servers[name].present);
+  return { ...base, ok: true, status: synced ? "synced" : "valid-not-synced", servers };
 }
 
 async function verifyCodexConfig(configPath, serverNames) {
   const servers = Object.fromEntries(serverNames.map((name) => [name, { present: false }]));
   try {
-    const text = await readTextOrDefault(configPath, "");
+    const text = await readFile(configPath, "utf8");
+    const validation = validateCodexToml(text);
     for (const name of serverNames) {
       servers[name] = { present: new RegExp(`^\\s*\\[mcp_servers\\.${escapeRegExp(name)}\\]`, "m").test(text) };
     }
-    return { path: configPath, ok: true, servers };
+    if (!validation.validToml) {
+      return { path: configPath, ok: false, status: "invalid", exists: true, validToml: false, parseError: validation.parseError, servers };
+    }
+    const synced = serverNames.every((name) => servers[name].present);
+    return { path: configPath, ok: true, status: synced ? "synced" : "valid-not-synced", exists: true, validToml: true, servers };
   } catch (error) {
-    return { path: configPath, ok: false, error: error.message, servers };
+    if (error.code === "ENOENT") return { path: configPath, ok: false, status: "missing", exists: false, validToml: false, servers };
+    return { path: configPath, ok: false, status: "invalid", exists: true, validToml: false, parseError: error.message, servers };
   }
 }
 
@@ -311,6 +393,106 @@ async function readJsonOrDefault(file, fallback) {
     if (error.code === "ENOENT") return fallback;
     throw error;
   }
+}
+
+async function readJsonLenientOrDefault(file, fallback) {
+  try {
+    const text = await readFile(file, "utf8");
+    return JSON.parse(text.replace(/^\uFEFF/, ""));
+  } catch {
+    return fallback;
+  }
+}
+
+async function inspectJsonFile(file) {
+  try {
+    const bytes = await readFile(file);
+    return inspectJsonBytes(bytes, file);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return {
+        path: file,
+        exists: false,
+        validJson: false,
+        hasBom: false,
+        firstBytes: [],
+        parseError: "file missing",
+        suggestedFix: "Create or sync the client config from cc-switch."
+      };
+    }
+    return {
+      path: file,
+      exists: false,
+      validJson: false,
+      hasBom: false,
+      firstBytes: [],
+      parseError: error.message,
+      suggestedFix: "Check file permissions and path."
+    };
+  }
+}
+
+function inspectJsonBytes(bytes, file) {
+  const firstBytes = [...bytes.subarray(0, 3)];
+  const hasBom = firstBytes[0] === 0xEF && firstBytes[1] === 0xBB && firstBytes[2] === 0xBF;
+  const text = bytes.toString("utf8");
+  try {
+    const value = JSON.parse(text);
+    return {
+      path: file,
+      exists: true,
+      validJson: true,
+      hasBom,
+      firstBytes,
+      parseError: null,
+      suggestedFix: hasBom ? "Back up and rewrite as UTF-8 without BOM: npm run repair:configs" : null,
+      value,
+      bytes
+    };
+  } catch (error) {
+    return {
+      path: file,
+      exists: true,
+      validJson: false,
+      hasBom,
+      firstBytes,
+      parseError: error.message,
+      suggestedFix: hasBom
+        ? "Back up and rewrite as UTF-8 without BOM: npm run repair:configs"
+        : "Back up the file and repair the JSON syntax before syncing MCP entries.",
+      bytes
+    };
+  }
+}
+
+function fileRepairSummary(inspection) {
+  return {
+    exists: inspection.exists,
+    validJson: inspection.validJson,
+    hasBom: inspection.hasBom,
+    firstBytes: inspection.firstBytes,
+    parseError: inspection.parseError,
+    suggestedFix: inspection.suggestedFix
+  };
+}
+
+function validateCodexToml(text) {
+  const seenSections = new Set();
+  const sectionPattern = /^\s*\[([^\]\r\n]+)\]\s*$/;
+  const malformedSectionPattern = /^\s*\[[^\]\r\n]*$/;
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    if (!line.trim() || line.trimStart().startsWith("#")) continue;
+    if (malformedSectionPattern.test(line)) {
+      return { validToml: false, parseError: `Malformed TOML section at line ${index + 1}.` };
+    }
+    const match = line.match(sectionPattern);
+    if (!match) continue;
+    if (seenSections.has(match[1])) {
+      return { validToml: false, parseError: `Duplicate TOML section [${match[1]}] at line ${index + 1}.` };
+    }
+    seenSections.add(match[1]);
+  }
+  return { validToml: true };
 }
 
 async function readTextOrDefault(file, fallback) {

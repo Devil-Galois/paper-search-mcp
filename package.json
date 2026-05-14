@@ -26,6 +26,8 @@
     "configure:direct": "node ./scripts/configure.mjs --manager direct",
     "verify:tools": "node ./scripts/list-tools.js",
     "verify:config": "node ./scripts/configure.mjs --verify-sync",
+    "verify:config:paper-search": "node ./scripts/configure.mjs --verify-sync --chrome-profile ./browser-profiles/paper-search",
+    "repair:configs": "node ./scripts/configure.mjs --repair-client-configs",
     "e2e:check": "node ./scripts/e2e-check.js"
   },
   "dependencies": {
